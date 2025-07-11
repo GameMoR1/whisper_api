@@ -95,15 +95,6 @@ async def root():
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css?family=Inter:400,600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-    setInterval(function(){
-        fetch('/status').then(r=>r.text()).then(html=>document.getElementById('status').innerHTML=html);
-        fetch('/logs').then(r=>r.text()).then(html=>document.getElementById('logs').innerHTML=html);
-        fetch('/tasks').then(r=>r.text()).then(html=>document.getElementById('tasks').innerHTML=html);
-        fetch('/stats').then(r=>r.text()).then(html=>document.getElementById('stats').innerHTML=html);
-        fetch('/history').then(r=>r.text()).then(html=>document.getElementById('history').innerHTML=html);
-    }, 1000);
-    </script>
     </head>
     <body>
     <div class="container">
@@ -113,12 +104,69 @@ async def root():
     <h3>Выполняются</h3>
     <div id='tasks'>""" + render_tasks(processing, queue) + """</div>
     <h3>История</h3>
-    <div id='history'>""" + render_history(history, stats_history) + """</div>
+    <div class='charts-row'>
+        <div class='chart-block'>
+            <h4>История загрузки GPU</h4>
+            <canvas id='gpu_history_chart' height='120'></canvas>
+        </div>
+        <div class='chart-block'>
+            <h4>История количества запросов</h4>
+            <canvas id='req_history_chart' height='120'></canvas>
+        </div>
+    </div>
     <h3>Логи работы API</h3>
     <div id='logs'>""" + render_logs(logs) + """</div>
-    </div></body></html>
+    </div>
+    <script>
+    let gpuChart, reqChart;
+
+    function updateCharts() {
+        fetch('/history_json').then(r => r.json()).then(data => {
+            const labels = data.timestamps;
+            const gpu = data.gpu;
+            const req = data.req;
+
+            if (!gpuChart) {
+                gpuChart = new Chart(document.getElementById('gpu_history_chart').getContext('2d'), {
+                    type: 'line',
+                    data: {labels: labels, datasets: [{label:'GPU (%)', data: gpu, borderColor:'#4fd1c5', backgroundColor:'rgba(79,209,197,0.1)'}]},
+                    options: {scales:{y:{min:0,max:100}}, animation: false}
+                });
+            } else {
+                gpuChart.data.labels = labels;
+                gpuChart.data.datasets[0].data = gpu;
+                gpuChart.update('none');
+            }
+
+            if (!reqChart) {
+                reqChart = new Chart(document.getElementById('req_history_chart').getContext('2d'), {
+                    type: 'line',
+                    data: {labels: labels, datasets: [{label:'Запросы', data: req, borderColor:'#f6ad55', backgroundColor:'rgba(246,173,85,0.1)'}]},
+                    options: {scales:{y:{beginAtZero:true}}, animation: false}
+                });
+            } else {
+                reqChart.data.labels = labels;
+                reqChart.data.datasets[0].data = req;
+                reqChart.update('none');
+            }
+        });
+    }
+
+    updateCharts();
+    setInterval(updateCharts, 1000);
+
+    setInterval(function(){
+        fetch('/status').then(r=>r.text()).then(html=>document.getElementById('status').innerHTML=html);
+        fetch('/logs').then(r=>r.text()).then(html=>document.getElementById('logs').innerHTML=html);
+        fetch('/tasks').then(r=>r.text()).then(html=>document.getElementById('tasks').innerHTML=html);
+        fetch('/stats').then(r=>r.text()).then(html=>document.getElementById('stats').innerHTML=html);
+    }, 1000);
+    </script>
+    </body>
+    </html>
     """
     return html
+
 
 @router.get("/status", response_class=HTMLResponse)
 async def status():
