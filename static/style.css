@@ -1,0 +1,83 @@
+body {
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(120deg, #e0eafc 0%, #cfdef3 100%);
+    color: #222;
+    margin: 0;
+    min-height: 100vh;
+}
+.container {
+    max-width: 1100px;
+    margin: 36px auto 36px auto;
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 6px 32px #b8c6db55;
+    padding: 36px 44px 28px 44px;
+    border: 1px solid #e7ecf3;
+}
+h2, h3 {
+    color: #1b3a57;
+    margin-top: 0;
+    letter-spacing: 0.5px;
+}
+h2 {
+    font-size: 2rem;
+    margin-bottom: 16px;
+}
+h3 {
+    margin: 32px 0 12px 0;
+    font-size: 1.2rem;
+}
+.gpu-count { font-weight: 600; color: #34a853; }
+.gpu-list { margin: 0 0 16px 0; padding: 0 0 0 18px; }
+.no-gpu { color: #d32f2f; font-weight: 500; }
+.models-table, .logs-table, .tasks-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 24px;
+    background: #f7fafd;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px #e3eaf355;
+}
+.models-table th, .logs-table th, .tasks-table th {
+    background: #e3eaf3;
+    font-weight: 600;
+    padding: 10px 12px;
+    border-bottom: 2px solid #b0bec5;
+    color: #263238;
+    text-align: left;
+}
+.models-table td, .logs-table td, .tasks-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 1rem;
+}
+.ok { color: #388e3c; font-weight: bold; }
+.wait { color: #ff9800; font-weight: bold; }
+.proc { color: #1976d2; font-weight: bold; }
+.err { color: #d32f2f; font-weight: bold; }
+.log-info { background: #e8f5e9; }
+.log-error { background: #ffebee; }
+.tasks-table tr:hover, .models-table tr:hover, .logs-table tr:hover {
+    background: #f0f4f8;
+}
+@media (max-width: 900px) {
+    .container { padding: 18px 3vw; }
+    .models-table, .logs-table, .tasks-table { font-size: 0.97rem; }
+    h2 { font-size: 1.3rem; }
+}
+@media (max-width: 600px) {
+    .container { padding: 6px 1vw; }
+    .models-table, .logs-table, .tasks-table { font-size: 0.92rem; }
+    h2 { font-size: 1.1rem; }
+    h3 { font-size: 1rem; }
+}
+::-webkit-scrollbar {
+    width: 10px;
+    background: #e3eaf3;
+    border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+    background: #b0bec5;
+    border-radius: 8px;
+}
