@@ -1,7 +1,5 @@
 import os
 import tempfile
-import threading
-import time
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 import torch
@@ -18,15 +16,6 @@ tasks_manager = None
 stats_history = StatsHistory()
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-loaded_models = {}
-
-def get_model(model_name: str, download_dir: str = None, device="cuda", device_index=None):
-    key = (model_name, download_dir, device_index)
-    if key not in loaded_models:
-        loaded_models[key] = whisper.load_model(
-            model_name, device=device, download_root=download_dir
-        )
-    return loaded_models[key]
 
 def format_timestamp(seconds):
     m, s = divmod(int(seconds), 60)
@@ -46,42 +35,6 @@ def gpt_chat(prompt: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     return response.strip()
-
-def background_queue_worker():
-    while True:
-        if tasks_manager is None:
-            time.sleep(1)
-            continue
-        queue = tasks_manager.get_queue()
-        for task in queue:
-            gpu_id = tasks_manager.assign_gpu_to_task(task.id)
-            if gpu_id is not None:
-                threading.Thread(
-                    target=process_task,
-                    args=(task, gpu_id),
-                    daemon=True
-                ).start()
-        time.sleep(1)
-
-def process_task(task, gpu_id):
-    tmp_path = task.filename
-    try:
-        model = get_model(task.model, device="cuda", device_index=gpu_id)
-        transcribe_kwargs = {"fp16": True, "beam_size": 5}
-        result = model.transcribe(tmp_path, **transcribe_kwargs)
-        formatted_text = format_segments(result['segments'])
-        tasks_manager.update_task_done(task.id, formatted_text)
-        if logs_manager:
-            logs_manager.log(f"Транскрибация завершена (задача {task.id[:8]})", "INFO")
-    except Exception as e:
-        tasks_manager.update_task_error(task.id, str(e))
-        if logs_manager:
-            logs_manager.log(f"Ошибка транскрибации (задача {task.id[:8]}): {str(e)}", "ERROR")
-    finally:
-        tasks_manager.release_gpu(gpu_id)
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        torch.cuda.empty_cache()
 
 @router.get("/", response_class=HTMLResponse)
 async def root():
@@ -230,17 +183,33 @@ async def history_json():
 async def transcribe(
     file: UploadFile = File(...),
     model_name: str = Form("base"),
-    model_dir: str = Form(None),
     initial_prompt: str = Form(None),
-    upgrade_transcribation: bool = Form(False)
+    upgrade_transcribation: bool = Form(False),
+    up_speed: str = Form(None)
 ):
+    # Проверяем статус модели
+    if not models_manager.is_model_loaded(model_name):
+        if models_manager.is_model_loading(model_name):
+            return JSONResponse({"error": f"Модель '{model_name}' ещё загружается. Попробуйте позже."}, status_code=503)
+        else:
+            return JSONResponse({"error": f"Модель '{model_name}' не готова или произошла ошибка."}, status_code=503)
+
+    # Получаем модель на CPU (всегда), для транскрибации копируем на GPU если нужно
+    base_model = models_manager.get_model(model_name, device="cpu")
+    if base_model is None:
+        return JSONResponse({"error": f"Модель '{model_name}' не найдена."}, status_code=503)
+
+    # Копируем модель на GPU только для транскрибации
+    model = base_model
+    if DEVICE == "cuda":
+        model = base_model.to("cuda")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
     try:
-        model = get_model(model_name, model_dir)
         transcribe_kwargs = {
             "fp16": (DEVICE == "cuda"),
             "beam_size": 5
@@ -276,4 +245,5 @@ async def transcribe(
         return JSONResponse({"error": str(e)}, status_code=500)
     finally:
         os.remove(tmp_path)
-        torch.cuda.empty_cache()
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()

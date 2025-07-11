@@ -8,13 +8,14 @@ class ModelsManager:
         self.download_root = download_root
         self.lock = threading.Lock()
         for name in model_names:
-            threading.Thread(target=self._load_model, args=(name,), daemon=True).start()
+            threading.Thread(target=self._load_model_cpu, args=(name,), daemon=True).start()
 
-    def _load_model(self, name):
+    def _load_model_cpu(self, name):
         with self.lock:
             self.status[name]["loading"] = True
         try:
-            model = whisper.load_model(name, download_root=self.download_root)
+            # Модель загружается только в CPU, чтобы не занимать видеопамять!
+            model = whisper.load_model(name, device="cpu", download_root=self.download_root)
             with self.lock:
                 self.models[name] = model
                 self.status[name]["loaded"] = True
@@ -37,6 +38,16 @@ class ModelsManager:
         with self.lock:
             return dict(self.status)
 
-    def get_model(self, name):
+    def get_model(self, name, device="cpu"):
+        # Возвращает модель на нужном устройстве (CPU или GPU)
         with self.lock:
-            return self.models.get(name)
+            model = self.models.get(name)
+        if model is None:
+            return None
+        if device == "cpu":
+            return model
+        # Если требуется GPU — копируем модель на GPU только для транскрибации
+        import torch
+        if torch.cuda.is_available():
+            return model.to("cuda")
+        return model
