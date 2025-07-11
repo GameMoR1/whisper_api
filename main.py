@@ -10,10 +10,21 @@ from tasks import TaskManager
 from gpu_monitor import GPUMonitor
 from log_manager import LogManager
 
+import torch
+
 # --- Инициализация компонентов ---
 model_manager = ModelManager()
 gpu_monitor = GPUMonitor()
 log_manager = LogManager()
+
+gpu_ids = gpu_monitor.get_gpu_ids()
+if not gpu_ids:
+    print("ВНИМАНИЕ: Не обнаружено ни одного GPU! Проверьте CUDA и драйверы.")
+else:
+    print(f"Обнаружено GPU: {gpu_ids}")
+    for i in gpu_ids:
+        print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+
 task_manager = TaskManager(model_manager, log_manager, gpu_monitor)
 
 # Запускаем загрузку моделей при старте
@@ -112,7 +123,6 @@ async function fetchData() {
             <td>${g.memory_used_MB}</td>
             <td>${g.utilization_percent ?? '-'}</td>
         </tr>`).join('');
-
     // Модели
     let models = await fetch('/api/models').then(r=>r.json());
     let modelTable = document.getElementById('model-table');
@@ -128,7 +138,6 @@ async function fetchData() {
     // Для селектора моделей
     let select = document.getElementById('model-select');
     select.innerHTML = models.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
-
     // Активные задачи
     let active = await fetch('/api/tasks/active').then(r=>r.json());
     let activeTable = document.getElementById('active-tasks');
@@ -142,7 +151,6 @@ async function fetchData() {
             <td>${t.started_at ? (new Date(t.started_at*1000)).toLocaleTimeString() : ''}</td>
             <td>${t.result_path ? `<a href="/api/result/${t.result_path}" target="_blank">Скачать</a>` : ''}</td>
         </tr>`).join('');
-
     // Очередь задач
     let queued = await fetch('/api/tasks/queued').then(r=>r.json());
     let queuedTable = document.getElementById('queued-tasks');
@@ -155,7 +163,6 @@ async function fetchData() {
             <td>${t.status}</td>
             <td>${(new Date(t.created_at*1000)).toLocaleTimeString()}</td>
         </tr>`).join('');
-
     // Логи
     let logs = await fetch('/api/logs').then(r=>r.json());
     let logTable = document.getElementById('log-table');
@@ -248,6 +255,9 @@ async def api_transcribe(
     # Проверяем, скачана ли модель
     if not model_manager.is_downloaded(model_name):
         return JSONResponse({"error": f"Модель {model_name} ещё не скачана. Ожидайте завершения загрузки."}, status_code=400)
+    # Проверяем наличие хотя бы одного GPU
+    if not gpu_monitor.get_gpu_ids():
+        return JSONResponse({"error": "На сервере не обнаружено ни одного GPU. Проверьте CUDA и драйверы."}, status_code=500)
     # Сохраняем файл корректно!
     file_ext = os.path.splitext(file.filename)[1]
     fd, tmp_path = tempfile.mkstemp()
