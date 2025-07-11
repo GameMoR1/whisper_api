@@ -3,6 +3,19 @@ import os
 from datetime import datetime
 from collections import deque
 
+class StatsHistory:
+    def __init__(self, max_minutes=48*60):
+        self.gpu_stats = deque(maxlen=max_minutes)
+        self.cpu_stats = deque(maxlen=max_minutes)
+        self.request_counts = deque(maxlen=max_minutes)
+        self.timestamps = deque(maxlen=max_minutes)
+
+    def add_stats(self, gpu, cpu, req_count):
+        self.gpu_stats.append(gpu)
+        self.cpu_stats.append(cpu)
+        self.request_counts.append(req_count)
+        self.timestamps.append(datetime.now())
+
 def get_gpu_stats():
     try:
         result = subprocess.check_output(
@@ -44,16 +57,3 @@ def get_cpu_ram_stats():
         "ram_used": mem_used,
         "ram_free": mem_free
     }
-
-class StatsHistory:
-    def __init__(self, max_minutes=48*60):
-        self.gpu_stats = deque(maxlen=max_minutes)
-        self.cpu_stats = deque(maxlen=max_minutes)
-        self.request_counts = deque(maxlen=max_minutes)
-        self.timestamps = deque(maxlen=max_minutes)
-
-    def add_stats(self, gpu, cpu, req_count):
-        self.gpu_stats.append(gpu)
-        self.cpu_stats.append(cpu)
-        self.request_counts.append(req_count)
-        self.timestamps.append(datetime.now())

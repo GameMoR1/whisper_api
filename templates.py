@@ -11,8 +11,13 @@ def render_status(count, gpus, models_status):
         html += "<p class='no-gpu'>GPU не обнаружены</p>"
     html += "<h3>Whisper модели</h3><table class='models-table'><tr><th>Модель</th><th>Статус</th><th>Ошибка</th></tr>"
     for name, info in models_status.items():
-        status = "<span class='ok'>✅</span>" if info["loaded"] else "<span class='wait'>⏳</span>"
-        error = f"<span class='err'>{info['error']}</span>" if info["error"] else ""
+        if info.get("loaded"):
+            status = "<span class='ok'>✅</span>"
+        elif info.get("loading"):
+            status = "<span class='wait'>⏳</span>"
+        else:
+            status = "<span class='err'>❌</span>"
+        error = f"<span class='err'>{info['error']}</span>" if info.get("error") else ""
         html += f"<tr><td>{name}</td><td>{status}</td><td>{error}</td></tr>"
     html += "</table>"
     return html
@@ -29,11 +34,11 @@ def render_tasks(processing, queue):
     html = "<div class='tasks-block'>"
     html += "<table class='tasks-table'><tr><th>ID</th><th>Файл</th><th>Модель</th><th>GPU</th><th>Старт</th><th>Статус</th></tr>"
     for task in processing:
-        html += f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td><td>{task.gpu_id}</td><td>{task.started_at.strftime('%H:%M:%S') if task.started_at else ''}</td><td><span class='proc'>Выполняется</span></td></tr>"
+        html += f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td><td>{task.gpu_id}</td><td>{task.started_at if task.started_at else ''}</td><td><span class='proc'>Выполняется</span></td></tr>"
     html += "</table>"
     html += "<table class='tasks-table'><tr><th>ID</th><th>Файл</th><th>Модель</th><th>Время постановки</th><th>Статус</th></tr>"
     for task in queue:
-        html += f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td><td>{task.created_at.strftime('%H:%M:%S')}</td><td><span class='wait'>В очереди</span></td></tr>"
+        html += f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td><td>{task.created_at}</td><td><span class='wait'>В очереди</span></td></tr>"
     html += "</table>"
     html += "</div>"
     return html
