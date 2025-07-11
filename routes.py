@@ -5,7 +5,7 @@ import whisper
 import torch
 import json
 from datetime import datetime, timedelta
-from fastapi import APIRouter, File, UploadFile, Form, Request
+from fastapi import APIRouter, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 
 router = APIRouter()
@@ -16,9 +16,8 @@ model_cache = {}
 LOG_PATH = "transcribe_log.json"
 
 def get_model(model_name):
-    if model_name not in model_cache:
-        model_cache[model_name] = whisper.load_model(model_name, device=DEVICE)
-    return model_cache[model_name]
+    # Возвращает модель только если она уже в кэше
+    return model_cache.get(model_name)
 
 def build_atempo_filters(speed):
     filters = []
@@ -39,7 +38,7 @@ def log_transcribe(entry):
         logs = []
     logs.append(entry)
     with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(logs[-1000:], f, ensure_ascii=False, indent=2)  # только последние 1000
+        json.dump(logs[-1000:], f, ensure_ascii=False, indent=2)
 
 def get_logs():
     if os.path.exists(LOG_PATH):
@@ -65,7 +64,6 @@ async def ui_root():
 
 @router.get("/api/gpu")
 async def api_gpu():
-    import torch
     if torch.cuda.is_available():
         count = torch.cuda.device_count()
         gpus = []
@@ -100,6 +98,13 @@ async def transcribe(
     upgrade_transcribation: bool = Form(False),
     up_speed: float = Form(1.0)
 ):
+    # Проверка: модель загружена?
+    if model_name not in model_cache:
+        return JSONResponse(
+            {"error": f"Модель '{model_name}' ещё не установлена. Подождите завершения загрузки."},
+            status_code=400
+        )
+
     fd, input_path = tempfile.mkstemp()
     os.close(fd)
     with open(input_path, "wb") as f:
@@ -123,6 +128,11 @@ async def transcribe(
 
     try:
         model = get_model(model_name)
+        if model is None:
+            return JSONResponse(
+                {"error": f"Модель '{model_name}' ещё не установлена. Подождите завершения загрузки."},
+                status_code=400
+            )
         transcribe_kwargs = {
             "fp16": (DEVICE == "cuda"),
             "beam_size": 5

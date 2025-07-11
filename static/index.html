@@ -8,34 +8,154 @@
         body {
             background: #18191a;
             color: #f1f1f1;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', 'Roboto', Arial, sans-serif;
             margin: 0; padding: 0;
+            min-height: 100vh;
         }
         .container {
-            max-width: 700px;
+            max-width: 540px;
             margin: 40px auto 0 auto;
             background: #232526;
             border-radius: 18px;
             box-shadow: 0 4px 32px #000a;
             padding: 32px 24px 24px 24px;
             text-align: center;
+            transition: max-width 0.3s;
         }
         h1 { color: #e4b34a; margin-bottom: 8px; }
         h2 { color: #d2ba4c; margin-top: 32px; }
         .section { margin-bottom: 30px; }
-        .gpu-table, .log-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-        th, td { padding: 8px 10px; border-bottom: 1px solid #333; }
-        th { background: #222; }
-        .btn { background: #e4b34a; color: #18191a; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;}
-        .btn:active { background: #c89f37; }
+        .gpu-table, .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+            background: #202124;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #333;
+            font-size: 15px;
+        }
+        th {
+            background: #1a1b1e;
+            color: #e4b34a;
+            font-weight: 600;
+        }
+        .btn {
+            background: linear-gradient(90deg, #e4b34a 60%, #b78b1e 100%);
+            color: #18191a;
+            border: none;
+            padding: 12px 26px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 17px;
+            font-weight: 600;
+            margin-top: 12px;
+            box-shadow: 0 2px 8px #0004;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .btn:active {
+            background: linear-gradient(90deg, #c89f37 60%, #a17a15 100%);
+            box-shadow: 0 1px 3px #0006;
+        }
+        .form-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+        .form-group input[type="file"] {
+            display: none;
+        }
+        .custom-file-label {
+            display: inline-block;
+            padding: 10px 18px;
+            background: #24292f;
+            color: #e4b34a;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            border: 1px solid #393939;
+            transition: background 0.2s, color 0.2s;
+        }
+        .custom-file-label:hover {
+            background: #2d3136;
+            color: #fffbe6;
+        }
+        .styled-input, select {
+            background: #222;
+            color: #f1f1f1;
+            border: 1.5px solid #393939;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 15px;
+            outline: none;
+            transition: border 0.2s;
+            min-width: 90px;
+        }
+        .styled-input:focus, select:focus {
+            border: 1.5px solid #e4b34a;
+        }
+        select {
+            min-width: 120px;
+        }
+        label.checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 15px;
+            cursor: pointer;
+            user-select: none;
+        }
+        input[type="checkbox"] {
+            accent-color: #e4b34a;
+            width: 18px;
+            height: 18px;
+        }
         .progress { background: #333; border-radius: 4px; overflow: hidden; height: 16px; }
         .progress-bar { background: #e4b34a; height: 100%; }
-        .log-table tr:nth-child(even) { background: #202124; }
+        .log-table tr:nth-child(even) { background: #232526; }
         .log-table td { font-size: 13px; }
         .centered {text-align: center;}
-        .chart-container { background: #222; border-radius: 12px; padding: 18px; margin: 0 auto 20px auto; max-width: 500px;}
-        @media (max-width: 800px) {
+        .chart-container {
+            background: #222;
+            border-radius: 12px;
+            padding: 18px;
+            margin: 0 auto 20px auto;
+            max-width: 100vw;
+        }
+        #upload-status {
+            margin-top: 12px;
+            min-height: 22px;
+            font-size: 15px;
+            color: #e4b34a;
+        }
+        #result-text {
+            white-space: pre-wrap;
+            background: #222;
+            color: #e4b34a;
+            margin-top: 18px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 16px;
+            word-break: break-word;
+            text-align: left;
+            max-width: 100%;
+        }
+        @media (max-width: 650px) {
             .container { max-width: 99vw; padding: 6vw 2vw; }
+            th, td { font-size: 13px; padding: 7px 4px; }
+            .btn { font-size: 15px; padding: 10px 14px; }
+            .form-group { gap: 8px; }
+        }
+        @media (max-width: 430px) {
+            .container { padding: 2vw 1vw; }
+            .form-group { flex-direction: column; align-items: stretch; }
+            #result-text { font-size: 14px; }
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -59,18 +179,24 @@
     </div>
     <div class="section">
         <h2>Загрузка файла для транскрибации</h2>
-        <form id="upload-form">
-            <input type="file" name="file" required>
-            <select name="model_name" id="model-select"></select>
-            <input type="number" name="up_speed" step="0.01" min="0.5" max="3" value="1" style="width:90px;" placeholder="Скорость">
-            <input type="text" name="initial_prompt" placeholder="Initial prompt (опционально)">
-            <label>
-                <input type="checkbox" name="upgrade_transcribation"> Улучшить через GPT
-            </label>
+        <form id="upload-form" autocomplete="off">
+            <div class="form-group">
+                <label class="custom-file-label" id="file-label">
+                    <input type="file" name="file" id="file-input" required>
+                    Выбрать файл
+                </label>
+                <select name="model_name" id="model-select" class="styled-input"></select>
+                <input type="number" name="up_speed" step="0.01" min="0.5" max="3" value="1" class="styled-input" placeholder="Скорость">
+                <input type="text" name="initial_prompt" class="styled-input" placeholder="Initial prompt (опционально)">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="upgrade_transcribation">
+                    Улучшить через GPT
+                </label>
+            </div>
             <button class="btn" type="submit">Транскрибировать</button>
         </form>
         <div id="upload-status"></div>
-        <pre id="result-text" style="white-space: pre-wrap; background: #222; color: #e4b34a; margin-top: 18px; padding: 10px; border-radius: 8px;"></pre>
+        <pre id="result-text"></pre>
     </div>
     <div class="section">
         <h2>Логи транскрибаций</h2>
@@ -79,6 +205,17 @@
 </div>
 <script>
 let statsChart = null;
+
+document.getElementById('file-input').addEventListener('change', function(e) {
+    let label = document.getElementById('file-label');
+    if (this.files && this.files.length > 0) {
+        label.textContent = this.files[0].name;
+        label.classList.add('selected');
+    } else {
+        label.textContent = "Выбрать файл";
+        label.classList.remove('selected');
+    }
+});
 
 async function fetchData() {
     // GPU
