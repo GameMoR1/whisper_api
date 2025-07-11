@@ -49,6 +49,9 @@ def gpt_chat(prompt: str) -> str:
 
 def background_queue_worker():
     while True:
+        if tasks_manager is None:
+            time.sleep(1)
+            continue
         queue = tasks_manager.get_queue()
         for task in queue:
             gpu_id = tasks_manager.assign_gpu_to_task(task.id)
@@ -68,8 +71,12 @@ def process_task(task, gpu_id):
         result = model.transcribe(tmp_path, **transcribe_kwargs)
         formatted_text = format_segments(result['segments'])
         tasks_manager.update_task_done(task.id, formatted_text)
+        if logs_manager:
+            logs_manager.log(f"Транскрибация завершена (задача {task.id[:8]})", "INFO")
     except Exception as e:
         tasks_manager.update_task_error(task.id, str(e))
+        if logs_manager:
+            logs_manager.log(f"Ошибка транскрибации (задача {task.id[:8]}): {str(e)}", "ERROR")
     finally:
         tasks_manager.release_gpu(gpu_id)
         if os.path.exists(tmp_path):
@@ -80,10 +87,10 @@ def process_task(task, gpu_id):
 async def root():
     count, gpus = len(get_gpu_stats()), get_gpu_stats()
     models_status = models_manager.get_status()
-    logs = logs_manager.get_logs()[-50:]
-    queue = tasks_manager.get_queue()
-    processing = tasks_manager.get_processing()
-    history = tasks_manager.get_history()
+    logs = logs_manager.get_logs()[-50:] if logs_manager else []
+    queue = tasks_manager.get_queue() if tasks_manager else []
+    processing = tasks_manager.get_processing() if tasks_manager else []
+    history = tasks_manager.get_history() if tasks_manager else []
     stats = get_cpu_ram_stats()
     gpu_stats = get_gpu_stats()
     stats_history.add_stats(gpu_stats, stats, len(history))
@@ -167,7 +174,6 @@ async def root():
     """
     return html
 
-
 @router.get("/status", response_class=HTMLResponse)
 async def status():
     count, gpus = len(get_gpu_stats()), get_gpu_stats()
@@ -176,13 +182,13 @@ async def status():
 
 @router.get("/logs", response_class=HTMLResponse)
 async def logs():
-    logs = logs_manager.get_logs()[-50:]
+    logs = logs_manager.get_logs()[-50:] if logs_manager else []
     return render_logs(logs)
 
 @router.get("/tasks", response_class=HTMLResponse)
 async def tasks():
-    queue = tasks_manager.get_queue()
-    processing = tasks_manager.get_processing()
+    queue = tasks_manager.get_queue() if tasks_manager else []
+    processing = tasks_manager.get_processing() if tasks_manager else []
     return render_tasks(processing, queue)
 
 @router.get("/stats", response_class=HTMLResponse)
@@ -193,7 +199,7 @@ async def stats():
 
 @router.get("/history", response_class=HTMLResponse)
 async def history():
-    history = tasks_manager.get_history()
+    history = tasks_manager.get_history() if tasks_manager else []
     return render_history(history, stats_history)
 
 @router.get("/history_json")

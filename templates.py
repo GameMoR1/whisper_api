@@ -1,3 +1,5 @@
+import os
+
 def render_status(count, gpus, models_status):
     html = f"<p>Доступно GPU: <span class='gpu-count'>{count}</span></p>"
     if count > 0:
@@ -57,37 +59,5 @@ def render_stats(gpu_stats, cpu_stats):
     return html
 
 def render_history(history, stats_history):
-    # Графики будут отрисованы на клиенте через JS (Chart.js)
-    html = """
-    <div class='charts-row'>
-        <div class='chart-block'>
-            <h4>История загрузки GPU</h4>
-            <canvas id='gpu_history_chart' height='120'></canvas>
-        </div>
-        <div class='chart-block'>
-            <h4>История количества запросов</h4>
-            <canvas id='req_history_chart' height='120'></canvas>
-        </div>
-    </div>
-    <script>
-    // Формируем данные для графиков (получаем их через эндпоинт /history_json)
-    fetch('/history_json').then(r=>r.json()).then(data=>{
-        let ctx1 = document.getElementById('gpu_history_chart').getContext('2d');
-        let ctx2 = document.getElementById('req_history_chart').getContext('2d');
-        let labels = data.timestamps;
-        let gpu = data.gpu;
-        let req = data.req;
-        new Chart(ctx1, {
-            type: 'line',
-            data: {labels: labels, datasets:[{label:'GPU (%)', data: gpu, borderColor:'#4fd1c5', backgroundColor:'rgba(79,209,197,0.1)'}]},
-            options: {scales:{y:{min:0,max:100}}}
-        });
-        new Chart(ctx2, {
-            type: 'line',
-            data: {labels: labels, datasets:[{label:'Запросы', data: req, borderColor:'#f6ad55', backgroundColor:'rgba(246,173,85,0.1)'}]},
-            options: {scales:{y:{beginAtZero:true}}}
-        });
-    });
-    </script>
-    """
-    return html
+    # Графики рисуются JS-скриптом на главной странице, тут только контейнеры
+    return ""
