@@ -1,13 +1,13 @@
 import os
 import tempfile
 import subprocess
-import whisper
 import torch
 import json
 import threading
 from datetime import datetime, timedelta
 from fastapi import APIRouter, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
+import g4f
 
 router = APIRouter()
 
@@ -22,6 +22,7 @@ LOG_PATH = "transcribe_log.json"
 def download_model(name):
     try:
         model_status[name]["progress"] = 10
+        import whisper
         model_cache[name] = whisper.load_model(name, device=DEVICE)
         model_status[name]["loaded"] = True
         model_status[name]["progress"] = 100
@@ -175,17 +176,37 @@ async def transcribe(
             for seg in result['segments']
         )
 
+        # Улучшение через GPT, если требуется
+        if upgrade_transcribation:
+            try:
+                gpt_prompt = (
+                    "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
+                    "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
+                    "исправь явные ошибки и сделай текст более читабельным. "
+                    "Сохрани тайминги в формате [mm:ss] перед каждой репликой. ЕСЛИ разговора нет, а был автоответчик или чтото другое, в первой строке напиши *false*, в другом случае *true*\n\n"
+                    f"{formatted_text}"
+                )
+                improved_text = g4f.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": gpt_prompt}],
+                ).strip()
+                result_text = improved_text
+            except Exception as e:
+                result_text = formatted_text
+        else:
+            result_text = formatted_text
+
         entry = {
             "datetime": datetime.utcnow().isoformat(),
             "model": model_name,
             "up_speed": up_speed,
             "filename": file.filename,
-            "result_len": len(formatted_text),
+            "result_len": len(result_text),
             "initial_prompt": initial_prompt,
             "upgrade_transcribation": upgrade_transcribation
         }
         log_transcribe(entry)
-        return {"text": formatted_text}
+        return {"text": result_text}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
     finally:
