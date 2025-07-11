@@ -1,10 +1,11 @@
 import os
 import tempfile
-from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks
+from fastapi.responses import JSONResponse, HTMLResponse
 import whisper
 import torch
 import g4f
+import httpx
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 loaded_models = {}
@@ -39,6 +40,20 @@ def gpt_chat(prompt: str) -> str:
     return response.strip()
 
 app = FastAPI()
+
+def get_gpu_info():
+    if torch.cuda.is_available():
+        count = torch.cuda.device_count()
+        gpus = []
+        for i in range(count):
+            gpus.append({
+                "id": i,
+                "name": torch.cuda.get_device_name(i),
+                "memory_total_MB": torch.cuda.get_device_properties(i).total_memory // (1024 * 1024)
+            })
+        return count, gpus
+    else:
+        return 0, []
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
