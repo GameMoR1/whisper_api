@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Whisper GPU Transcriber</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+        body {
+            background: #18191a;
+            color: #f1f1f1;
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0; padding: 0;
+        }
+        .container {
+            max-width: 700px;
+            margin: 40px auto 0 auto;
+            background: #232526;
+            border-radius: 18px;
+            box-shadow: 0 4px 32px #000a;
+            padding: 32px 24px 24px 24px;
+            text-align: center;
+        }
+        h1 { color: #e4b34a; margin-bottom: 8px; }
+        h2 { color: #d2ba4c; margin-top: 32px; }
+        .section { margin-bottom: 30px; }
+        .gpu-table, .log-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+        th, td { padding: 8px 10px; border-bottom: 1px solid #333; }
+        th { background: #222; }
+        .btn { background: #e4b34a; color: #18191a; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;}
+        .btn:active { background: #c89f37; }
+        .progress { background: #333; border-radius: 4px; overflow: hidden; height: 16px; }
+        .progress-bar { background: #e4b34a; height: 100%; }
+        .log-table tr:nth-child(even) { background: #202124; }
+        .log-table td { font-size: 13px; }
+        .centered {text-align: center;}
+        .chart-container { background: #222; border-radius: 12px; padding: 18px; margin: 0 auto 20px auto; max-width: 500px;}
+        @media (max-width: 800px) {
+            .container { max-width: 99vw; padding: 6vw 2vw; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="container">
+    <h1>Whisper GPU Transcriber</h1>
+    <div class="section">
+        <h2>GPU</h2>
+        <table class="gpu-table" id="gpu-table"></table>
+    </div>
+    <div class="section">
+        <h2>Модели</h2>
+        <table class="gpu-table" id="model-table"></table>
+    </div>
+    <div class="section">
+        <h2>График запросов за 24 часа</h2>
+        <div class="chart-container">
+            <canvas id="statsChart" width="450" height="180"></canvas>
+        </div>
+    </div>
+    <div class="section">
+        <h2>Загрузка файла для транскрибации</h2>
+        <form id="upload-form">
+            <input type="file" name="file" required>
+            <select name="model_name" id="model-select"></select>
+            <input type="number" name="up_speed" step="0.01" min="0.5" max="3" value="1" style="width:90px;" placeholder="Скорость">
+            <input type="text" name="initial_prompt" placeholder="Initial prompt (опционально)">
+            <label>
+                <input type="checkbox" name="upgrade_transcribation"> Улучшить через GPT
+            </label>
+            <button class="btn" type="submit">Транскрибировать</button>
+        </form>
+        <div id="upload-status"></div>
+        <pre id="result-text" style="white-space: pre-wrap; background: #222; color: #e4b34a; margin-top: 18px; padding: 10px; border-radius: 8px;"></pre>
+    </div>
+    <div class="section">
+        <h2>Логи транскрибаций</h2>
+        <table class="log-table" id="log-table"></table>
+    </div>
+</div>
+<script>
+let statsChart = null;
+
+async function fetchData() {
+    // GPU
+    let gpu = await fetch('/api/gpu').then(r=>r.json());
+    let gpuTable = document.getElementById('gpu-table');
+    gpuTable.innerHTML = '<tr><th>ID</th><th>Имя</th><th>Память (МБ)</th><th>Использовано (МБ)</th></tr>' +
+        gpu.map(g=>`<tr>
+            <td>${g.id}</td>
+            <td>${g.name}</td>
+            <td>${g.memory_total_MB}</td>
+            <td>${g.memory_used_MB}</td>
+        </tr>`).join('');
+
+    // Модели
+    let models = await fetch('/api/models').then(r=>r.json());
+    let modelTable = document.getElementById('model-table');
+    modelTable.innerHTML = '<tr><th>Модель</th><th>Загружена</th></tr>' +
+        models.map(m=>`<tr>
+            <td>${m.name}</td>
+            <td>${m.loaded ? "✅" : "⏳"}</td>
+        </tr>`).join('');
+    let select = document.getElementById('model-select');
+    select.innerHTML = models.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
+
+    // График
+    let stats = await fetch('/api/stats24').then(r=>r.json());
+    let ctx = document.getElementById('statsChart').getContext('2d');
+    let labels = [];
+    let now = new Date();
+    for(let i=0;i<24;i++) {
+        let h = new Date(now.getTime() - (23-i)*3600*1000).getHours();
+        labels.push((h<10?'0':'')+h+":00");
+    }
+    if(statsChart) statsChart.destroy();
+    statsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Запросы',
+                data: stats,
+                borderColor: '#e4b34a',
+                backgroundColor: 'rgba(228,179,74,0.1)',
+                tension: 0.3,
+                pointRadius: 3,
+                pointBackgroundColor: '#e4b34a'
+            }]
+        },
+        options: {
+            plugins: {
+                legend: {display: false}
+            },
+            scales: {
+                x: {ticks: {color: '#f1f1f1'}, grid: {color: '#444'}},
+                y: {ticks: {color: '#f1f1f1'}, grid: {color: '#444'}, beginAtZero:true}
+            },
+            responsive: true
+        }
+    });
+
+    // Логи
+    let logs = await fetch('/api/logs').then(r=>r.json());
+    let logTable = document.getElementById('log-table');
+    logTable.innerHTML = '<tr><th>Время</th><th>Файл</th><th>Модель</th><th>Скорость</th><th>Длина</th></tr>' +
+        logs.map(l=>`<tr>
+            <td>${l.datetime.replace('T','<br>')}</td>
+            <td>${l.filename}</td>
+            <td>${l.model}</td>
+            <td>${l.up_speed}</td>
+            <td>${l.result_len}</td>
+        </tr>`).join('');
+}
+setInterval(fetchData, 3000);
+fetchData();
+
+document.getElementById('upload-form').onsubmit = async function(e) {
+    e.preventDefault();
+    let form = new FormData(this);
+    let statusDiv = document.getElementById('upload-status');
+    let resultText = document.getElementById('result-text');
+    statusDiv.textContent = "Загрузка...";
+    resultText.textContent = "";
+    let resp = await fetch('/api/transcribe', {method: 'POST', body: form});
+    let data = await resp.json();
+    if (data.error) {
+        statusDiv.textContent = "Ошибка: " + data.error;
+    } else {
+        statusDiv.textContent = "Готово!";
+        resultText.textContent = data.text;
+    }
+}
+</script>
+</body>
+</html>
