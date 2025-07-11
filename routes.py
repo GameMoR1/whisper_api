@@ -4,6 +4,7 @@ import subprocess
 import whisper
 import torch
 import json
+import threading
 from datetime import datetime, timedelta
 from fastapi import APIRouter, File, UploadFile, Form
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -11,12 +12,30 @@ from fastapi.responses import JSONResponse, HTMLResponse
 router = APIRouter()
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+model_status = {name: {"loaded": False, "progress": 0, "error": None} for name in WHISPER_MODELS}
 model_cache = {}
 
 LOG_PATH = "transcribe_log.json"
 
+def download_model(name):
+    try:
+        model_status[name]["progress"] = 10
+        model_cache[name] = whisper.load_model(name, device=DEVICE)
+        model_status[name]["loaded"] = True
+        model_status[name]["progress"] = 100
+    except Exception as e:
+        model_status[name]["error"] = str(e)
+        model_status[name]["progress"] = 0
+
+def preload_models():
+    for name in WHISPER_MODELS:
+        threading.Thread(target=download_model, args=(name,), daemon=True).start()
+
+preload_models()
+
 def get_model(model_name):
-    # Возвращает модель только если она уже в кэше
     return model_cache.get(model_name)
 
 def build_atempo_filters(speed):
@@ -80,11 +99,19 @@ async def api_gpu():
 
 @router.get("/api/models")
 async def api_models():
-    return [{"name": n, "loaded": n in model_cache} for n in ["tiny", "base", "small", "medium", "large-v2", "large-v3"]]
+    return [
+        {
+            "name": name,
+            "loaded": model_status[name]["loaded"],
+            "progress": model_status[name]["progress"],
+            "error": model_status[name]["error"]
+        }
+        for name in WHISPER_MODELS
+    ]
 
 @router.get("/api/logs")
 async def api_logs():
-    return get_logs()[::-1]  # последние сверху
+    return get_logs()[::-1]
 
 @router.get("/api/stats24")
 async def api_stats24():
@@ -99,7 +126,7 @@ async def transcribe(
     up_speed: float = Form(1.0)
 ):
     # Проверка: модель загружена?
-    if model_name not in model_cache:
+    if not model_status.get(model_name, {}).get("loaded", False):
         return JSONResponse(
             {"error": f"Модель '{model_name}' ещё не установлена. Подождите завершения загрузки."},
             status_code=400

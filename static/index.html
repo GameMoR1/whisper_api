@@ -232,13 +232,18 @@ async function fetchData() {
     // Модели
     let models = await fetch('/api/models').then(r=>r.json());
     let modelTable = document.getElementById('model-table');
-    modelTable.innerHTML = '<tr><th>Модель</th><th>Загружена</th></tr>' +
+    modelTable.innerHTML = '<tr><th>Модель</th><th>Статус</th><th>Прогресс</th></tr>' +
         models.map(m=>`<tr>
             <td>${m.name}</td>
-            <td>${m.loaded ? "✅" : "⏳"}</td>
+            <td>${m.loaded ? "✅" : (m.error ? "Ошибка" : "⏳")}</td>
+            <td>
+                <div class="progress"><div class="progress-bar" style="width:${m.progress}%;"></div></div>
+                ${m.progress}%
+                ${m.error ? `<div style="color:#f55;font-size:13px;">${m.error}</div>` : ""}
+            </td>
         </tr>`).join('');
     let select = document.getElementById('model-select');
-    select.innerHTML = models.map(m=>`<option value="${m.name}">${m.name}</option>`).join('');
+    select.innerHTML = models.map(m=>`<option value="${m.name}" ${!m.loaded ? "disabled" : ""}>${m.name}</option>`).join('');
 
     // График
     let stats = await fetch('/api/stats24').then(r=>r.json());
