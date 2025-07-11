@@ -248,9 +248,11 @@ async def api_transcribe(
     # Проверяем, скачана ли модель
     if not model_manager.is_downloaded(model_name):
         return JSONResponse({"error": f"Модель {model_name} ещё не скачана. Ожидайте завершения загрузки."}, status_code=400)
-    # Сохраняем файл
+    # Сохраняем файл корректно!
     file_ext = os.path.splitext(file.filename)[1]
-    save_path = os.path.join("uploads", f"{os.path.splitext(file.filename)[0]}_{int(tempfile.mkstemp()[1])}{file_ext}")
+    fd, tmp_path = tempfile.mkstemp()
+    os.close(fd)
+    save_path = os.path.join("uploads", f"{os.path.splitext(file.filename)[0]}_{os.path.basename(tmp_path)}{file_ext}")
     with open(save_path, "wb") as f:
         f.write(await file.read())
     # Добавляем задачу с максимальным приоритетом
