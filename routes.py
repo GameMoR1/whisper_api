@@ -83,6 +83,46 @@ def background_queue_worker():
                 ).start()
         time.sleep(1)
 
+@router.post("/transcribe/")
+async def transcribe(
+    file: UploadFile = File(...),
+    model_name: str = Form("base"),
+    initial_prompt: str = Form(None),
+    upgrade_transcribation: bool = Form(False),
+    up_speed: str = Form(None)
+):
+    if not models_manager.is_model_loaded(model_name):
+        if models_manager.is_model_loading(model_name):
+            return JSONResponse({"error": f"Модель '{model_name}' ещё загружается. Попробуйте позже."}, status_code=503)
+        else:
+            return JSONResponse({"error": f"Модель '{model_name}' не готова или произошла ошибка."}, status_code=503)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    task_id = tasks_manager.add_task(tmp_path, model_name)
+    if logs_manager:
+        logs_manager.log(f"Поставлена задача {task_id[:8]} на транскрибацию файла {file.filename} ({model_name})", "INFO")
+
+    return JSONResponse({
+        "status": "processing",
+        "task_id": task_id,
+        "detail": "Файл принят, задача поставлена в очередь"
+    })
+
+@router.get("/task_result/{task_id}")
+async def task_result(task_id: str):
+    task = tasks_manager.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Задача не найдена"}, status_code=404)
+    if task.status == "done":
+        return JSONResponse({"text": task.result_text})
+    if task.status == "error":
+        return JSONResponse({"error": task.error}, status_code=500)
+    return JSONResponse({"status": task.status})
+
 @router.get("/", response_class=HTMLResponse)
 async def root():
     count, gpus = len(get_gpu_stats()), get_gpu_stats()
@@ -220,71 +260,3 @@ async def history_json():
         else:
             timestamps.append("")
     return JSONResponse({"gpu": gpu, "req": req, "timestamps": timestamps})
-
-@router.post("/transcribe/")
-async def transcribe(
-    file: UploadFile = File(...),
-    model_name: str = Form("base"),
-    initial_prompt: str = Form(None),
-    upgrade_transcribation: bool = Form(False),
-    up_speed: str = Form(None)
-):
-    # Проверяем статус модели
-    if not models_manager.is_model_loaded(model_name):
-        if models_manager.is_model_loading(model_name):
-            return JSONResponse({"error": f"Модель '{model_name}' ещё загружается. Попробуйте позже."}, status_code=503)
-        else:
-            return JSONResponse({"error": f"Модель '{model_name}' не готова или произошла ошибка."}, status_code=503)
-
-    base_model = models_manager.get_model(model_name, device="cpu")
-    if base_model is None:
-        return JSONResponse({"error": f"Модель '{model_name}' не найдена."}, status_code=503)
-
-    # Копируем модель на GPU только для транскрибации
-    model = base_model
-    if DEVICE == "cuda":
-        model = base_model.to("cuda")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        transcribe_kwargs = {
-            "fp16": (DEVICE == "cuda"),
-            "beam_size": 5
-        }
-        if initial_prompt:
-            transcribe_kwargs["initial_prompt"] = initial_prompt
-
-        result = model.transcribe(tmp_path, **transcribe_kwargs)
-        formatted_text = format_segments(result['segments'])
-
-        if upgrade_transcribation:
-            gpt_prompt = (
-                "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
-                "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
-                "исправь явные ошибки и сделай текст более читабельным. "
-                "Сохрани тайминги в формате [mm:ss] перед каждой репликой. "
-                "Учитывай, что в таймингах, которые уже есть - ошибки. "
-                "Иногда реплика незакончена, а тайминг подписан. Не обрывай реплики таймингами. "
-                "Если спикер не закончил говорить, не пиши тайминг.\n\n"
-                f"{formatted_text}"
-            )
-            try:
-                improved_text = gpt_chat(gpt_prompt)
-                return JSONResponse({"text": improved_text})
-            except Exception as e:
-                return JSONResponse({
-                    "text": formatted_text,
-                    "warning": f"Ошибка улучшения через GPT: {str(e)}"
-                })
-        else:
-            return JSONResponse({"text": formatted_text})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-    finally:
-        os.remove(tmp_path)
-        if DEVICE == "cuda":
-            torch.cuda.empty_cache()
