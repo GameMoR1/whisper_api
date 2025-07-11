@@ -40,9 +40,19 @@ def gpt_chat(prompt: str) -> str:
 
 app = FastAPI()
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "message": "API is running"}
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    count, gpus = get_gpu_info()
+    html = "<h2>API работает корректно</h2>"
+    html += f"<p>Доступно GPU: {count}</p>"
+    if count > 0:
+        html += "<ul>"
+        for gpu in gpus:
+            html += f"<li>ID: {gpu['id']}, Name: {gpu['name']}, Memory: {gpu['memory_total_MB']} MB</li>"
+        html += "</ul>"
+    else:
+        html += "<p>GPU не обнаружены</p>"
+    return html
 
 @app.post("/transcribe/")
 async def transcribe(
