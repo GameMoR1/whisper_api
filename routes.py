@@ -110,7 +110,7 @@ async def root():
     <h2>Whisper API — Мониторинг и управление</h2>
     <div id="stats">""" + render_stats(gpu_stats, stats) + """</div>
     <div id="status">""" + render_status(count, gpus, models_status) + """</div>
-    <h3>Выполняются и в очереди</h3>
+    <h3>Выполняются</h3>
     <div id='tasks'>""" + render_tasks(processing, queue) + """</div>
     <h3>История</h3>
     <div id='history'>""" + render_history(history, stats_history) + """</div>
@@ -180,22 +180,46 @@ async def transcribe(
     initial_prompt: str = Form(None),
     upgrade_transcribation: bool = Form(False)
 ):
-    if not models_manager.is_model_loaded(model_name):
-        return JSONResponse(
-            {"error": f"Модель '{model_name}' ещё не скачана. Попробуйте позже."},
-            status_code=503
-        )
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
-    task_id = tasks_manager.add_task(tmp_path, model_name)
-    while True:
-        task = tasks_manager.get_task(task_id)
-        if task.status == "done":
-            return JSONResponse({"text": task.result_text})
-        if task.status == "error":
-            return JSONResponse({"error": task.error}, status_code=500)
-        time.sleep(0.5)
+    try:
+        model = get_model(model_name, model_dir)
+        transcribe_kwargs = {
+            "fp16": (DEVICE == "cuda"),
+            "beam_size": 5
+        }
+        if initial_prompt:
+            transcribe_kwargs["initial_prompt"] = initial_prompt
+
+        result = model.transcribe(tmp_path, **transcribe_kwargs)
+        formatted_text = format_segments(result['segments'])
+
+        if upgrade_transcribation:
+            gpt_prompt = (
+                "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
+                "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
+                "исправь явные ошибки и сделай текст более читабельным. "
+                "Сохрани тайминги в формате [mm:ss] перед каждой репликой. "
+                "Учитывай, что в таймингах, которые уже есть - ошибки. "
+                "Иногда реплика незакончена, а тайминг подписан. Не обрывай реплики таймингами. "
+                "Если спикер не закончил говорить, не пиши тайминг.\n\n"
+                f"{formatted_text}"
+            )
+            try:
+                improved_text = gpt_chat(gpt_prompt)
+                return JSONResponse({"text": improved_text})
+            except Exception as e:
+                return JSONResponse({
+                    "text": formatted_text,
+                    "warning": f"Ошибка улучшения через GPT: {str(e)}"
+                })
+        else:
+            return JSONResponse({"text": formatted_text})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        os.remove(tmp_path)
+        torch.cuda.empty_cache()
