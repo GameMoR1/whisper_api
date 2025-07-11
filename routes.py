@@ -1,6 +1,6 @@
 import os
 import tempfile
-from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 import torch
 import whisper
@@ -110,13 +110,13 @@ async def tasks():
 
 @router.post("/transcribe/")
 async def transcribe(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     model_name: str = Form("base"),
     model_dir: str = Form(None),
     initial_prompt: str = Form(None),
     upgrade_transcribation: bool = Form(False)
 ):
+    # Проверка загрузки модели
     if not models_manager.is_model_loaded(model_name):
         return JSONResponse(
             {"error": f"Модель '{model_name}' ещё не скачана. Попробуйте позже."},
@@ -128,46 +128,41 @@ async def transcribe(
         tmp.write(content)
         tmp_path = tmp.name
 
-    task_id = tasks_manager.add_task(file.filename, model_name)
-    logs_manager.log(f"Задача {task_id}: получен файл {file.filename} для транскрибации ({model_name})", "INFO")
+    try:
+        model = get_model(model_name, model_dir)
+        transcribe_kwargs = {
+            "fp16": (DEVICE == "cuda"),
+            "beam_size": 5
+        }
+        if initial_prompt:
+            transcribe_kwargs["initial_prompt"] = initial_prompt
 
-    def process_task():
-        try:
-            tasks_manager.update_task(task_id, "processing")
-            model = get_model(model_name, model_dir)
-            transcribe_kwargs = {
-                "fp16": (DEVICE == "cuda"),
-                "beam_size": 5
-            }
-            if initial_prompt:
-                transcribe_kwargs["initial_prompt"] = initial_prompt
-            result = model.transcribe(tmp_path, **transcribe_kwargs)
-            formatted_text = format_segments(result['segments'])
-            if upgrade_transcribation:
-                gpt_prompt = (
-                    "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
-                    "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
-                    "исправь явные ошибки и сделай текст более читабельным. "
-                    "Сохрани тайминги в формате [mm:ss] перед каждой репликой. "
-                    "Учитывай, что в таймингах, которые уже есть - ошибки. "
-                    "Иногда реплика незакончена, а тайминг подписан. Не обрывай реплики таймингами. "
-                    "Если спикер не закончил говорить, не пиши тайминг.\n\n"
-                    f"{formatted_text}"
-                )
-                try:
-                    improved_text = gpt_chat(gpt_prompt)
-                    logs_manager.log(f"Задача {task_id}: улучшенная транскрибация завершена", "INFO")
-                except Exception as e:
-                    logs_manager.log(f"Задача {task_id}: ошибка улучшения через GPT: {str(e)}", "ERROR")
-            else:
-                logs_manager.log(f"Задача {task_id}: транскрибация завершена", "INFO")
-            tasks_manager.update_task(task_id, "done")
-        except Exception as e:
-            logs_manager.log(f"Задача {task_id}: ошибка транскрибации: {str(e)}", "ERROR")
-            tasks_manager.update_task(task_id, "error", str(e))
-        finally:
-            os.remove(tmp_path)
-            torch.cuda.empty_cache()
+        result = model.transcribe(tmp_path, **transcribe_kwargs)
+        formatted_text = format_segments(result['segments'])
 
-    background_tasks.add_task(process_task)
-    return JSONResponse({"status": "processing", "task_id": task_id, "detail": "Файл принят, задача поставлена в очередь"})
+        if upgrade_transcribation:
+            gpt_prompt = (
+                "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
+                "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
+                "исправь явные ошибки и сделай текст более читабельным. "
+                "Сохрани тайминги в формате [mm:ss] перед каждой репликой. "
+                "Учитывай, что в таймингах, которые уже есть - ошибки. "
+                "Иногда реплика незакончена, а тайминг подписан. Не обрывай реплики таймингами. "
+                "Если спикер не закончил говорить, не пиши тайминг.\n\n"
+                f"{formatted_text}"
+            )
+            try:
+                improved_text = gpt_chat(gpt_prompt)
+                return JSONResponse({"text": improved_text})
+            except Exception as e:
+                return JSONResponse({
+                    "text": formatted_text,
+                    "warning": f"Ошибка улучшения через GPT: {str(e)}"
+                })
+        else:
+            return JSONResponse({"text": formatted_text})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        os.remove(tmp_path)
+        torch.cuda.empty_cache()
