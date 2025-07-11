@@ -64,5 +64,4 @@ def render_stats(gpu_stats, cpu_stats):
     return html
 
 def render_history(history, stats_history):
-    # Графики рисуются JS-скриптом на главной странице, тут только контейнеры
     return ""

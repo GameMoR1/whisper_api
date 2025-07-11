@@ -14,7 +14,7 @@ class ModelsManager:
         with self.lock:
             self.status[name]["loading"] = True
         try:
-            # Модель загружается только в CPU, чтобы не занимать видеопамять!
+            # Загружаем только на CPU!
             model = whisper.load_model(name, device="cpu", download_root=self.download_root)
             with self.lock:
                 self.models[name] = model
@@ -39,14 +39,12 @@ class ModelsManager:
             return dict(self.status)
 
     def get_model(self, name, device="cpu"):
-        # Возвращает модель на нужном устройстве (CPU или GPU)
         with self.lock:
             model = self.models.get(name)
         if model is None:
             return None
         if device == "cpu":
             return model
-        # Если требуется GPU — копируем модель на GPU только для транскрибации
         import torch
         if torch.cuda.is_available():
             return model.to("cuda")
