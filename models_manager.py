@@ -1,21 +1,35 @@
 import threading
 import whisper
+import os
 
 class ModelsManager:
     def __init__(self, model_names, download_root):
         self.status = {name: {"loaded": False, "loading": False, "error": None} for name in model_names}
         self.models = {}
-        self.download_root = download_root
+        self.download_root = os.path.expanduser(download_root)
         self.lock = threading.Lock()
+        os.makedirs(self.download_root, exist_ok=True)
         for name in model_names:
             threading.Thread(target=self._load_model_cpu, args=(name,), daemon=True).start()
+
+    def _model_cached(self, name):
+        # Whisper кладёт веса в папку download_root/ или ~/.cache/whisper/
+        model_dir = os.path.join(self.download_root, name)
+        # Проверяем по наличию файла weights
+        for file in os.listdir(self.download_root):
+            if name in file and file.endswith('.pt'):
+                return True
+        return False
 
     def _load_model_cpu(self, name):
         with self.lock:
             self.status[name]["loading"] = True
         try:
-            # Загружаем только на CPU!
-            model = whisper.load_model(name, device="cpu", download_root=self.download_root)
+            if not self._model_cached(name):
+                # Только если нет на диске — скачиваем
+                model = whisper.load_model(name, device="cpu", download_root=self.download_root)
+            else:
+                model = whisper.load_model(name, device="cpu", download_root=self.download_root)
             with self.lock:
                 self.models[name] = model
                 self.status[name]["loaded"] = True

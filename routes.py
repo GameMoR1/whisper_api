@@ -260,3 +260,12 @@ async def history_json():
         else:
             timestamps.append("")
     return JSONResponse({"gpu": gpu, "req": req, "timestamps": timestamps})
+
+@router.post("/delete_task/")
+async def delete_task(task_id: str = Form(...)):
+    success = tasks_manager.delete_task(task_id)
+    if success:
+        if logs_manager:
+            logs_manager.log(f"Удалена задача {task_id[:8]} из очереди", "INFO")
+        return JSONResponse({"ok": True})
+    return JSONResponse({"ok": False, "error": "Задача не найдена или уже выполняется"}, status_code=400)

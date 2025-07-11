@@ -65,3 +65,36 @@ def render_stats(gpu_stats, cpu_stats):
 
 def render_history(history, stats_history):
     return ""
+
+def render_tasks(processing, queue):
+    html = "<div class='tasks-block'>"
+    html += "<table class='tasks-table'><tr><th>ID</th><th>Файл</th><th>Модель</th><th>GPU</th><th>Старт</th><th>Статус</th></tr>"
+    for task in processing:
+        html += f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td><td>{task.gpu_id}</td><td>{task.started_at if task.started_at else ''}</td><td><span class='proc'>Выполняется</span></td></tr>"
+    html += "</table>"
+    html += "<table class='tasks-table'><tr><th>ID</th><th>Файл</th><th>Модель</th><th>Время постановки</th><th>Статус</th><th></th></tr>"
+    for task in queue:
+        html += (
+            f"<tr><td>{task.id[:8]}</td><td>{os.path.basename(task.filename)}</td><td>{task.model}</td>"
+            f"<td>{task.created_at}</td><td><span class='wait'>В очереди</span></td>"
+            f"<td><button class='delete-task-btn' data-taskid='{task.id}'>Удалить</button></td></tr>"
+        )
+    html += "</table></div>"
+    html += """
+    <script>
+    document.querySelectorAll('.delete-task-btn').forEach(btn => {
+        btn.onclick = function() {
+            if (!confirm('Удалить задачу из очереди?')) return;
+            fetch('/delete_task/', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'task_id=' + encodeURIComponent(btn.dataset.taskid)
+            }).then(r => r.json()).then(res => {
+                if(res.ok) location.reload();
+                else alert(res.error || 'Ошибка удаления');
+            });
+        }
+    });
+    </script>
+    """
+    return html

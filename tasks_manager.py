@@ -92,3 +92,11 @@ class TasksManager:
                 if task.gpu_id is not None:
                     self.gpu_states[task.gpu_id] = None
                     task.gpu_id = None
+
+def delete_task(self, task_id):
+    with self.lock:
+        for i, task in enumerate(self.tasks):
+            if task.id == task_id and task.status == "pending":
+                del self.tasks[i]
+                return True
+    return False
