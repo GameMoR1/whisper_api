@@ -1,25 +1,31 @@
 import os
 import tempfile
+import threading
+import time
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 import torch
 import whisper
 import g4f
-from templates import render_status, render_logs, render_tasks
+from templates import render_status, render_logs, render_tasks, render_stats, render_history
+from stats_manager import get_gpu_stats, get_cpu_ram_stats, StatsHistory
 
 router = APIRouter()
 
 models_manager = None
 logs_manager = None
 tasks_manager = None
+stats_history = StatsHistory()
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 loaded_models = {}
 
-def get_model(model_name: str, download_dir: str = None):
-    key = (model_name, download_dir)
+def get_model(model_name: str, download_dir: str = None, device="cuda", device_index=None):
+    key = (model_name, download_dir, device_index)
     if key not in loaded_models:
-        loaded_models[key] = whisper.load_model(model_name, device=DEVICE, download_root=download_dir)
+        loaded_models[key] = whisper.load_model(
+            model_name, device=device, download_root=download_dir
+        )
     return loaded_models[key]
 
 def format_timestamp(seconds):
@@ -41,27 +47,46 @@ def gpt_chat(prompt: str) -> str:
     )
     return response.strip()
 
-def get_gpu_info():
-    if torch.cuda.is_available():
-        count = torch.cuda.device_count()
-        gpus = []
-        for i in range(count):
-            gpus.append({
-                "id": i,
-                "name": torch.cuda.get_device_name(i),
-                "memory_total_MB": torch.cuda.get_device_properties(i).total_memory // (1024 * 1024)
-            })
-        return count, gpus
-    else:
-        return 0, []
+def background_queue_worker():
+    while True:
+        queue = tasks_manager.get_queue()
+        for task in queue:
+            gpu_id = tasks_manager.assign_gpu_to_task(task.id)
+            if gpu_id is not None:
+                threading.Thread(
+                    target=process_task,
+                    args=(task, gpu_id),
+                    daemon=True
+                ).start()
+        time.sleep(1)
+
+def process_task(task, gpu_id):
+    tmp_path = task.filename
+    try:
+        model = get_model(task.model, device="cuda", device_index=gpu_id)
+        transcribe_kwargs = {"fp16": True, "beam_size": 5}
+        result = model.transcribe(tmp_path, **transcribe_kwargs)
+        formatted_text = format_segments(result['segments'])
+        tasks_manager.update_task_done(task.id, formatted_text)
+    except Exception as e:
+        tasks_manager.update_task_error(task.id, str(e))
+    finally:
+        tasks_manager.release_gpu(gpu_id)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        torch.cuda.empty_cache()
 
 @router.get("/", response_class=HTMLResponse)
 async def root():
-    count, gpus = get_gpu_info()
+    count, gpus = len(get_gpu_stats()), get_gpu_stats()
     models_status = models_manager.get_status()
     logs = logs_manager.get_logs()[-50:]
-    tasks = tasks_manager.get_tasks()
-
+    queue = tasks_manager.get_queue()
+    processing = tasks_manager.get_processing()
+    history = tasks_manager.get_history()
+    stats = get_cpu_ram_stats()
+    gpu_stats = get_gpu_stats()
+    stats_history.add_stats(gpu_stats, stats, len(history))
     html = """
     <html>
     <head>
@@ -69,32 +94,35 @@ async def root():
     <meta charset="utf-8">
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css?family=Inter:400,600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
     setInterval(function(){
         fetch('/status').then(r=>r.text()).then(html=>document.getElementById('status').innerHTML=html);
         fetch('/logs').then(r=>r.text()).then(html=>document.getElementById('logs').innerHTML=html);
         fetch('/tasks').then(r=>r.text()).then(html=>document.getElementById('tasks').innerHTML=html);
+        fetch('/stats').then(r=>r.text()).then(html=>document.getElementById('stats').innerHTML=html);
+        fetch('/history').then(r=>r.text()).then(html=>document.getElementById('history').innerHTML=html);
     }, 1000);
     </script>
     </head>
     <body>
     <div class="container">
     <h2>Whisper API — Мониторинг и управление</h2>
-    <div id="status">
+    <div id="stats">""" + render_stats(gpu_stats, stats) + """</div>
+    <div id="status">""" + render_status(count, gpus, models_status) + """</div>
+    <h3>Выполняются и в очереди</h3>
+    <div id='tasks'>""" + render_tasks(processing, queue) + """</div>
+    <h3>История</h3>
+    <div id='history'>""" + render_history(history, stats_history) + """</div>
+    <h3>Логи работы API</h3>
+    <div id='logs'>""" + render_logs(logs) + """</div>
+    </div></body></html>
     """
-    html += render_status(count, gpus, models_status)
-    html += "</div>"
-    html += "<h3>Активные процессы</h3><div id='tasks'>"
-    html += render_tasks(tasks)
-    html += "</div>"
-    html += "<h3>Логи работы API</h3><div id='logs'>"
-    html += render_logs(logs)
-    html += "</div></div></body></html>"
     return html
 
 @router.get("/status", response_class=HTMLResponse)
 async def status():
-    count, gpus = get_gpu_info()
+    count, gpus = len(get_gpu_stats()), get_gpu_stats()
     models_status = models_manager.get_status()
     return render_status(count, gpus, models_status)
 
@@ -105,8 +133,44 @@ async def logs():
 
 @router.get("/tasks", response_class=HTMLResponse)
 async def tasks():
-    tasks = tasks_manager.get_tasks()
-    return render_tasks(tasks)
+    queue = tasks_manager.get_queue()
+    processing = tasks_manager.get_processing()
+    return render_tasks(processing, queue)
+
+@router.get("/stats", response_class=HTMLResponse)
+async def stats():
+    stats = get_cpu_ram_stats()
+    gpu_stats = get_gpu_stats()
+    return render_stats(gpu_stats, stats)
+
+@router.get("/history", response_class=HTMLResponse)
+async def history():
+    history = tasks_manager.get_history()
+    return render_history(history, stats_history)
+
+@router.get("/history_json")
+async def history_json():
+    gpu = []
+    req = []
+    timestamps = []
+    for i, t in enumerate(stats_history.timestamps):
+        if i < len(stats_history.gpu_stats):
+            gpus = stats_history.gpu_stats[i]
+            if isinstance(gpus, list) and gpus:
+                gpu.append(max([g['gpu_util'] for g in gpus]))
+            else:
+                gpu.append(0)
+        else:
+            gpu.append(0)
+        if i < len(stats_history.request_counts):
+            req.append(stats_history.request_counts[i])
+        else:
+            req.append(0)
+        if i < len(stats_history.timestamps):
+            timestamps.append(stats_history.timestamps[i].strftime("%H:%M"))
+        else:
+            timestamps.append("")
+    return JSONResponse({"gpu": gpu, "req": req, "timestamps": timestamps})
 
 @router.post("/transcribe/")
 async def transcribe(
@@ -116,7 +180,6 @@ async def transcribe(
     initial_prompt: str = Form(None),
     upgrade_transcribation: bool = Form(False)
 ):
-    # Проверка загрузки модели
     if not models_manager.is_model_loaded(model_name):
         return JSONResponse(
             {"error": f"Модель '{model_name}' ещё не скачана. Попробуйте позже."},
@@ -128,41 +191,11 @@ async def transcribe(
         tmp.write(content)
         tmp_path = tmp.name
 
-    try:
-        model = get_model(model_name, model_dir)
-        transcribe_kwargs = {
-            "fp16": (DEVICE == "cuda"),
-            "beam_size": 5
-        }
-        if initial_prompt:
-            transcribe_kwargs["initial_prompt"] = initial_prompt
-
-        result = model.transcribe(tmp_path, **transcribe_kwargs)
-        formatted_text = format_segments(result['segments'])
-
-        if upgrade_transcribation:
-            gpt_prompt = (
-                "Вот расшифровка диалога между двумя спикерами: сотрудником и клиентом. "
-                "Раздели текст по репликам спикеров, подпиши кто говорит (Сотрудник или Клиент), "
-                "исправь явные ошибки и сделай текст более читабельным. "
-                "Сохрани тайминги в формате [mm:ss] перед каждой репликой. "
-                "Учитывай, что в таймингах, которые уже есть - ошибки. "
-                "Иногда реплика незакончена, а тайминг подписан. Не обрывай реплики таймингами. "
-                "Если спикер не закончил говорить, не пиши тайминг.\n\n"
-                f"{formatted_text}"
-            )
-            try:
-                improved_text = gpt_chat(gpt_prompt)
-                return JSONResponse({"text": improved_text})
-            except Exception as e:
-                return JSONResponse({
-                    "text": formatted_text,
-                    "warning": f"Ошибка улучшения через GPT: {str(e)}"
-                })
-        else:
-            return JSONResponse({"text": formatted_text})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-    finally:
-        os.remove(tmp_path)
-        torch.cuda.empty_cache()
+    task_id = tasks_manager.add_task(tmp_path, model_name)
+    while True:
+        task = tasks_manager.get_task(task_id)
+        if task.status == "done":
+            return JSONResponse({"text": task.result_text})
+        if task.status == "error":
+            return JSONResponse({"error": task.error}, status_code=500)
+        time.sleep(0.5)

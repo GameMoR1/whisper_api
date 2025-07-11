@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from models_manager import ModelsManager
 from logs_manager import LogsManager
 from tasks_manager import TasksManager
-from routes import router
+from routes import router, background_queue_worker
 
 app = FastAPI(title="Whisper API (OOP)")
 
@@ -18,3 +18,6 @@ routes.tasks_manager = tasks_manager
 
 app.include_router(router)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+import threading
+threading.Thread(target=background_queue_worker, daemon=True).start()
