@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 import torch
@@ -35,6 +37,51 @@ def gpt_chat(prompt: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     return response.strip()
+
+def process_task(task, gpu_id):
+    tmp_path = task.filename
+    try:
+        base_model = models_manager.get_model(task.model, device="cpu")
+        if base_model is None:
+            tasks_manager.update_task_error(task.id, f"Модель '{task.model}' не найдена.")
+            return
+        model = base_model
+        if DEVICE == "cuda":
+            model = base_model.to("cuda")
+        transcribe_kwargs = {"fp16": (DEVICE == "cuda"), "beam_size": 5}
+        result = model.transcribe(tmp_path, **transcribe_kwargs)
+        formatted_text = format_segments(result['segments'])
+        tasks_manager.update_task_done(task.id, formatted_text)
+        if logs_manager:
+            logs_manager.log(f"Транскрибация завершена (задача {task.id[:8]})", "INFO")
+    except Exception as e:
+        tasks_manager.update_task_error(task.id, str(e))
+        if logs_manager:
+            logs_manager.log(f"Ошибка транскрибации (задача {task.id[:8]}): {str(e)}", "ERROR")
+    finally:
+        tasks_manager.release_gpu(gpu_id)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+
+def background_queue_worker():
+    while True:
+        if tasks_manager is None or models_manager is None:
+            time.sleep(1)
+            continue
+        queue = tasks_manager.get_queue()
+        for task in queue:
+            if not models_manager.is_model_loaded(task.model):
+                continue
+            gpu_id = tasks_manager.assign_gpu_to_task(task.id)
+            if gpu_id is not None:
+                threading.Thread(
+                    target=process_task,
+                    args=(task, gpu_id),
+                    daemon=True
+                ).start()
+        time.sleep(1)
 
 @router.get("/", response_class=HTMLResponse)
 async def root():
@@ -79,13 +126,11 @@ async def root():
     </div>
     <script>
     let gpuChart, reqChart;
-
     function updateCharts() {
         fetch('/history_json').then(r => r.json()).then(data => {
             const labels = data.timestamps;
             const gpu = data.gpu;
             const req = data.req;
-
             if (!gpuChart) {
                 gpuChart = new Chart(document.getElementById('gpu_history_chart').getContext('2d'), {
                     type: 'line',
@@ -97,7 +142,6 @@ async def root():
                 gpuChart.data.datasets[0].data = gpu;
                 gpuChart.update('none');
             }
-
             if (!reqChart) {
                 reqChart = new Chart(document.getElementById('req_history_chart').getContext('2d'), {
                     type: 'line',
@@ -111,10 +155,8 @@ async def root():
             }
         });
     }
-
     updateCharts();
     setInterval(updateCharts, 1000);
-
     setInterval(function(){
         fetch('/status').then(r=>r.text()).then(html=>document.getElementById('status').innerHTML=html);
         fetch('/logs').then(r=>r.text()).then(html=>document.getElementById('logs').innerHTML=html);
@@ -194,7 +236,6 @@ async def transcribe(
         else:
             return JSONResponse({"error": f"Модель '{model_name}' не готова или произошла ошибка."}, status_code=503)
 
-    # Получаем модель на CPU (всегда), для транскрибации копируем на GPU если нужно
     base_model = models_manager.get_model(model_name, device="cpu")
     if base_model is None:
         return JSONResponse({"error": f"Модель '{model_name}' не найдена."}, status_code=503)
